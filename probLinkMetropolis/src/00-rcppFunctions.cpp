@@ -60,10 +60,8 @@ double logProposalRatio(IntegerVector labelsCurrent, IntegerVector labelsPropose
   int targetClass = labelsPropose(cppLabelIndex);
   int nCompRows = comparisons.nrow();
 
-  // cout << "Source Class: " << sourceClass << endl;
-  // cout << "Target Class: "<< targetClass << endl;
-
   int nLabels = labelsCurrent.size();
+  
   // Here nFeatures doesn't include the indexing columns (the first two)
   int nFeatures =  comparisons.ncol() - 2;
 
@@ -144,37 +142,7 @@ double logProposalRatio(IntegerVector labelsCurrent, IntegerVector labelsPropose
   return targetPosterior - sourcePosterior;
 }
 
-// [[Rcpp::export]]
-NumericMatrix computeComparisonVectors(IntegerMatrix rowPairs, CharacterMatrix data){
-
-  //for m relevant rows, construct the mc2 matrix of comparisons
-  int m = rowPairs.nrow();
-  int p = data.ncol() - 1;
-  NumericMatrix compareLabels(m, p + 2);
-
-  //Make vector of comparisons between labels
-  for(int i = 0; i < m ; i++){
-
-    compareLabels(i, 0) = rowPairs(i, 0);
-    compareLabels(i, 1) = rowPairs(i, 1);
-
-    for(int k = 0; k < p; k++){
-      // Some awkaward indexing here to move around the key column (which comes first). May need to change.
-
-      if(CharacterMatrix::is_na(data(rowPairs(i, 0) - 1, k + 1)) || CharacterMatrix::is_na(data(rowPairs(i, 1) - 1, k + 1))){
-        compareLabels(i, k + 2) = NA_REAL;
-      }else{
-        compareLabels(i, k + 2) = data(rowPairs(i, 0) - 1, k + 1) == data(rowPairs(i, 1) - 1, k + 1);
-      }
-    }
-  }
-  return compareLabels;
-}
-
 // Metropolis algorithm
-
-
-
 
 // [[Rcpp::export]]
 NumericMatrix linkageMetropolis(IntegerVector initialLabels, NumericMatrix comparisons, NumericVector ms, NumericVector us, float priorLinkProb, int mcmc, int reportInterval){
@@ -203,11 +171,91 @@ NumericMatrix linkageMetropolis(IntegerVector initialLabels, NumericMatrix compa
       }
     }
     mcmcOut(i,_) = initialLabels;
+    if(i % reportInterval == 0){
+      cout << "Just finished iteration " << i << endl;
+    }
   }
   return mcmcOut;
 }
 
+// Functions involved in making the set of comparison vectors
 
 
+// Given a set of integers, make all possible pairs of those integers
+
+// [[Rcpp::export]]
+NumericMatrix makeCombinations(NumericVector numbers){
+  int n = numbers.size();
+  int nc2 = n * (n - 1) / 2;
+  NumericMatrix pairs(nc2, 2);
+  int row = 0;
+  for(int i = 0; i < (n - 1); i++){
+    for(int j = (i + 1); j < n; j++){
+      pairs(row, 0) = numbers(i);
+      pairs(row, 1) = numbers(j);
+      row++;
+    }
+  }
+    return pairs;
+}
+
+
+//Given a vector of component labels, make a list of all pairs between rows that have the same label value
+
+// [[Rcpp::export]]
+Rcpp::List componentLabelsToBonds(CharacterVector blockingFeature, NumericVector componentLabels, int nUniqueFeatures){
+  int n = componentLabels.size();
+  Rcpp::List bondList(nUniqueFeatures);
+  
+  int startingIndex = 0;
+  int endingIndex = 0;
+  NumericVector indexSequence;
+  int listEntryIndex = 0;
+  
+  for(int i = 1; i < n; i++){
+    //cout << listEntryIndex << endl;
+    if(blockingFeature(i) == blockingFeature(i - 1)){
+      endingIndex++;
+    }else{
+      indexSequence = seq(startingIndex, endingIndex);
+      //cout << componentLabels[indexSequence] << endl;
+      bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
+      startingIndex = endingIndex + 1;
+      endingIndex = startingIndex;
+      listEntryIndex++;
+    }
+  }
+  indexSequence = seq(startingIndex, endingIndex);
+  bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
+  return bondList;
+}
+
+// Takes the valid pairs of rows and makes the 0/1 comparison vectors
+// [[Rcpp::export]]
+NumericMatrix computeComparisonVectors(IntegerMatrix rowPairs, CharacterMatrix data){
+  
+  //for m relevant rows, construct the mc2 matrix of comparisons
+  int m = rowPairs.nrow();
+  int p = data.ncol() - 1;
+  NumericMatrix compareLabels(m, p + 2);
+  
+  //Make vector of comparisons between labels
+  for(int i = 0; i < m ; i++){
+    
+    compareLabels(i, 0) = rowPairs(i, 0);
+    compareLabels(i, 1) = rowPairs(i, 1);
+    
+    for(int k = 0; k < p; k++){
+      // Some awkaward indexing here to move around the key column (which comes first). May need to change.
+      
+      if(CharacterMatrix::is_na(data(rowPairs(i, 0) - 1, k + 1)) || CharacterMatrix::is_na(data(rowPairs(i, 1) - 1, k + 1))){
+        compareLabels(i, k + 2) = NA_REAL;
+      }else{
+        compareLabels(i, k + 2) = data(rowPairs(i, 0) - 1, k + 1) == data(rowPairs(i, 1) - 1, k + 1);
+      }
+    }
+  }
+  return compareLabels;
+}
 
 
