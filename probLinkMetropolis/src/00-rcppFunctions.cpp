@@ -3,6 +3,160 @@
 using namespace Rcpp;
 using namespace std;
 
+
+// Function to replicate the behavior of x[order(y)]. Also does not modify the arguments in place.
+
+IntegerVector sortBy(IntegerVector x, IntegerVector order){
+  IntegerVector idx = seq_along(x) - 1;
+  std::sort(idx.begin(), idx.end(), [&](int i, int j){
+    return order[i] < order[j];
+    });
+  return x[idx];
+}
+
+//rbindlist version
+
+IntegerMatrix rbindBonds(List pairList){
+  
+  int nList = pairList.size();
+  int nrows = 0;
+  for(int i = 0; i < nList; i++){
+    nrows += as<IntegerMatrix>(pairList(i)).nrow();
+  }
+  
+  IntegerMatrix out(nrows, 2);
+  int listIndex = 0;
+  int rowIndex = 0;
+  
+  for(int i = 0; i < nList; i++){
+    IntegerMatrix mat = as<IntegerMatrix>(pairList(listIndex));
+    for(int j = 0; j < mat.nrow(); j ++){
+      out(rowIndex,_) = mat(j,_);
+      rowIndex++;
+    }
+    listIndex++;
+  }
+  return out;
+}
+
+// Given a set of integers, make all possible pairs of those integers
+
+// [[Rcpp::export]]
+NumericMatrix makeCombinations(IntegerVector numbers){
+  int n = numbers.size();
+  int nc2 = n * (n - 1) / 2;
+  NumericMatrix pairs(nc2, 2);
+  int row = 0;
+  for(int i = 0; i < (n - 1); i++){
+    for(int j = (i + 1); j < n; j++){
+      pairs(row, 0) = numbers(i);
+      pairs(row, 1) = numbers(j);
+      row++;
+    }
+  }
+  return pairs;
+}
+
+//Given a vector of component labels, make a list of all pairs between rows that have the same label value
+
+// [[Rcpp::export]]
+Rcpp::List componentLabelsToBonds(IntegerVector blockingFeature, IntegerVector componentLabels, int nUniqueFeatures){
+  int n = componentLabels.size();
+  Rcpp::List bondList(nUniqueFeatures);
+  
+  int startingIndex = 0;
+  int endingIndex = 0;
+  NumericVector indexSequence;
+  int listEntryIndex = 0;
+  
+  for(int i = 1; i < n; i++){
+    if(blockingFeature(i) == blockingFeature(i - 1)){
+      endingIndex++;
+    }else{
+      indexSequence = seq(startingIndex, endingIndex);
+      bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
+      startingIndex = endingIndex + 1;
+      endingIndex = startingIndex;
+      listEntryIndex++;
+    }
+  }
+  indexSequence = seq(startingIndex, endingIndex);
+  bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
+  return bondList;
+}
+
+// Finds a bond in a list of bonds (sorted)
+
+// [[Rcpp::export]]
+NumericVector findBondInList(int id1, int id2, NumericMatrix bondList){
+  int p = bondList.ncol();
+  int nrow = bondList.nrow();
+  int row = 0;
+  
+  
+  while(id1 != bondList(row, 0) & row < nrow){
+    row++;
+  }
+  while(id2 != bondList(row, 1) & row < nrow){
+    row++;
+  }
+  
+  if(row >= bondList.nrow()){
+    NumericVector out(p - 2);
+    return out;
+  }
+  
+  NumericVector out(p - 2);
+  for(int i = 0; i < p - 2; i++){
+    out[i] = bondList(row, i+2);
+  }
+  
+  return out;
+}
+
+// Functions to draw beta samples for the non-class label parameters
+
+NumericVector sampleBeta(NumericVector a, NumericVector b){
+  
+  int p = a.size();
+  NumericVector out(p);
+  
+  for(int i = 0; i < p; i++){
+    out(i) = rbeta(1, a(i), b(i))(0);
+  }
+  
+  return out;
+}
+
+// Takes the valid pairs of rows and makes the 0/1 comparison vectors
+// [[Rcpp::export]]
+NumericMatrix computeComparisonVectors(IntegerMatrix rowPairs, CharacterMatrix data){
+  
+  //for m relevant rows, construct the mc2 matrix of comparisons
+  int m = rowPairs.nrow();
+  int p = data.ncol() - 1;
+  NumericMatrix compareLabels(m, p + 2);
+  
+  //Make vector of comparisons between labels
+  for(int i = 0; i < m ; i++){
+    
+    compareLabels(i, 0) = rowPairs(i, 0);
+    compareLabels(i, 1) = rowPairs(i, 1);
+    
+    for(int k = 0; k < p; k++){
+      // Some awkaward indexing here to move around the key column (which comes first). May need to change.
+      
+      if(CharacterMatrix::is_na(data(rowPairs(i, 0) - 1, k + 1)) || CharacterMatrix::is_na(data(rowPairs(i, 1) - 1, k + 1))){
+        compareLabels(i, k + 2) = NA_REAL;
+      }else{
+        compareLabels(i, k + 2) = data(rowPairs(i, 0) - 1, k + 1) == data(rowPairs(i, 1) - 1, k + 1);
+      }
+    }
+  }
+  return compareLabels;
+}
+
+
 // Functions involved in computing the log posterior and the proposal ratio
 
 // [[Rcpp::export]]
@@ -20,7 +174,6 @@ float logPosterior(IntegerVector labels, NumericMatrix comparisons, NumericVecto
       check++;
     }
   }
-
   // Compute rolling sum of comparison by feature terms. If a comparison is missing, disinclude it
   int p = comparisons.ncol();
   float out = 0;
@@ -65,33 +218,26 @@ double logProposalRatio(IntegerVector labelsCurrent, IntegerVector labelsPropose
   // Here nFeatures doesn't include the indexing columns (the first two)
   int nFeatures =  comparisons.ncol() - 2;
 
-
   // Find indices of the records involved in relevant comparisons
   IntegerVector relevantIndices;
   IntegerVector relevantSourceLabels;
   IntegerVector relevantTargetLabels;
   for(int i = 0; i < nLabels; i++){
-    //if(i != cppLabelIndex && labelsPropose(i) == targetClass){
     if(labelsPropose(i) == targetClass){
       relevantIndices.push_back(i);
       relevantSourceLabels.push_back(labelsCurrent(i));
       relevantTargetLabels.push_back(labelsPropose(i));
     }
     if(i != cppLabelIndex && labelsCurrent(i) == sourceClass){
-    //if(labelsCurrent(i) == sourceClass){
       relevantIndices.push_back(i);
       relevantSourceLabels.push_back(labelsCurrent(i));
       relevantTargetLabels.push_back(labelsPropose(i));
     }
   }
-  // cout << "Relevant Indices: "<< relevantIndices << endl;
-  // cout << "Proposal labels for SOURCE set: "<< relevantSourceLabels << endl;
-  // cout << "Proposal labels for TARGET set: "<< relevantTargetLabels << endl;
-
   // If there is exactly one relevant index, then the comparison is from a singleton set into another singleton set. This has no effect on the likelihood, so let's just reject this.
 
   if(relevantIndices.size() == 1){
-    //cout << NA_REAL << endl;
+    //cout << "First na real return" << endl;
     return NA_REAL;
   }
 
@@ -120,7 +266,6 @@ double logProposalRatio(IntegerVector labelsCurrent, IntegerVector labelsPropose
     }
   }
 
-  //cout << "Row indices from the comparison matrix: "<< relevantComparisonRowIndices << endl;
 
   // Take these row indices and construct the matrix of appropriate comparisons
 
@@ -134,11 +279,8 @@ double logProposalRatio(IntegerVector labelsCurrent, IntegerVector labelsPropose
 
   float targetPosterior;
   float sourcePosterior;
-
   targetPosterior = logPosterior(relevantTargetLabels, relevantCompMat, ms, us, priorLinkProb);
   sourcePosterior = logPosterior(relevantSourceLabels, relevantCompMat, ms, us, priorLinkProb);
-  //cout << "Target posterior:" << targetPosterior << endl;
-  //cout << "Source posterior:" << sourcePosterior << endl;
   return targetPosterior - sourcePosterior;
 }
 
@@ -152,110 +294,114 @@ NumericMatrix linkageMetropolis(IntegerVector initialLabels, NumericMatrix compa
 
   NumericMatrix mcmcOut(mcmc, n);
   IntegerVector proposedLabels = clone(initialLabels);
+  
   for(int i = 0; i < mcmc; i++){
     for(int j = 0; j < n; j++){
-      // cout << "j =  " << j << endl;
       newLabel = (rand() % n) + 1;
       proposedLabels(j) = newLabel;
-      // cout << "Proposed Label =  " << newLabel << endl;
-      // cout << "Source labels = " << initialLabels << endl;
-      // cout << "Target labels = " << proposedLabels << endl;
       alpha = logProposalRatio(initialLabels, proposedLabels, comparisons, ms, us, priorLinkProb, j + 1);
-      // cout << "Alpha = " << alpha << endl;
       if(alpha > log(runif(1)(0))) {
         initialLabels[j] = proposedLabels[j];
-        // cout << "Accepted" << endl;
       }else{
         proposedLabels[j] = initialLabels[j];
-        // cout << "Rejected" << endl;
       }
     }
     mcmcOut(i,_) = initialLabels;
-    if(i % reportInterval == 0){
-      cout << "Just finished iteration " << i << endl;
+    if((i + 1) % reportInterval == 0){
+      cout << "Beginning iteration " << i << endl;
     }
   }
   return mcmcOut;
 }
 
-// Functions involved in making the set of comparison vectors
-
-
-// Given a set of integers, make all possible pairs of those integers
+// Metropolis algorithm with a gibbs step for the non-class label parameters
 
 // [[Rcpp::export]]
-NumericMatrix makeCombinations(NumericVector numbers){
-  int n = numbers.size();
+List linkageMetropolisWithGibbs(IntegerVector initialLabels, NumericMatrix comparisons, NumericVector ms, NumericVector us, float priorLinkProb, int mcmc, int reportInterval){
+  
+  int n = initialLabels.size();
+  float alpha;
+  int newLabel;
+  int p = comparisons.ncol() - 2;
   int nc2 = n * (n - 1) / 2;
-  NumericMatrix pairs(nc2, 2);
-  int row = 0;
-  for(int i = 0; i < (n - 1); i++){
-    for(int j = (i + 1); j < n; j++){
-      pairs(row, 0) = numbers(i);
-      pairs(row, 1) = numbers(j);
-      row++;
+  
+  // Storage objects
+  NumericMatrix mcmcOut(mcmc, n);
+  NumericVector aTrace(mcmc);
+  NumericMatrix mTrace(mcmc, p);
+  NumericMatrix uTrace(mcmc, p);
+  IntegerVector proposedLabels = clone(initialLabels);
+  
+  //Count the sum of the comparisons that are equal
+  NumericVector gammaTotal(p);
+  for(int i = 0; i < p; i++){
+    for(int j = 0; j < comparisons.nrow(); j++){
+      gammaTotal(i) += comparisons(j, i + 2);
     }
   }
-    return pairs;
-}
-
-
-//Given a vector of component labels, make a list of all pairs between rows that have the same label value
-
-// [[Rcpp::export]]
-Rcpp::List componentLabelsToBonds(CharacterVector blockingFeature, NumericVector componentLabels, int nUniqueFeatures){
-  int n = componentLabels.size();
-  Rcpp::List bondList(nUniqueFeatures);
   
-  int startingIndex = 0;
-  int endingIndex = 0;
-  NumericVector indexSequence;
-  int listEntryIndex = 0;
-  
-  for(int i = 1; i < n; i++){
-    //cout << listEntryIndex << endl;
-    if(blockingFeature(i) == blockingFeature(i - 1)){
-      endingIndex++;
-    }else{
-      indexSequence = seq(startingIndex, endingIndex);
-      //cout << componentLabels[indexSequence] << endl;
-      bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
-      startingIndex = endingIndex + 1;
-      endingIndex = startingIndex;
-      listEntryIndex++;
-    }
-  }
-  indexSequence = seq(startingIndex, endingIndex);
-  bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
-  return bondList;
-}
-
-// Takes the valid pairs of rows and makes the 0/1 comparison vectors
-// [[Rcpp::export]]
-NumericMatrix computeComparisonVectors(IntegerMatrix rowPairs, CharacterMatrix data){
-  
-  //for m relevant rows, construct the mc2 matrix of comparisons
-  int m = rowPairs.nrow();
-  int p = data.ncol() - 1;
-  NumericMatrix compareLabels(m, p + 2);
-  
-  //Make vector of comparisons between labels
-  for(int i = 0; i < m ; i++){
+  // This is the outer loop. At each iteration it samples each class label and then does a Gibbs step for each other parameter
+  for(int i = 0; i < mcmc; i++){
     
-    compareLabels(i, 0) = rowPairs(i, 0);
-    compareLabels(i, 1) = rowPairs(i, 1);
-    
-    for(int k = 0; k < p; k++){
-      // Some awkaward indexing here to move around the key column (which comes first). May need to change.
-      
-      if(CharacterMatrix::is_na(data(rowPairs(i, 0) - 1, k + 1)) || CharacterMatrix::is_na(data(rowPairs(i, 1) - 1, k + 1))){
-        compareLabels(i, k + 2) = NA_REAL;
+    // Inner loop for doing Metropolis on each class label
+    for(int j = 0; j < n; j++){
+      newLabel = (rand() % n) + 1;
+      proposedLabels(j) = newLabel;
+      alpha = logProposalRatio(initialLabels, proposedLabels, comparisons, ms, us, priorLinkProb, j + 1);
+      if(alpha > log(runif(1)(0))) {
+        initialLabels[j] = proposedLabels[j];
       }else{
-        compareLabels(i, k + 2) = data(rowPairs(i, 0) - 1, k + 1) == data(rowPairs(i, 1) - 1, k + 1);
+        proposedLabels[j] = initialLabels[j];
       }
     }
+    
+    // Save the class label results and report as requested
+    mcmcOut(i,_) = initialLabels;
+    if(i % reportInterval == 0){
+      cout << "Beginning iteration " << i << endl;
+    }
+    
+    //Gibbs section for other parameters
+    
+    Rcpp::List bonds = componentLabelsToBonds(sortBy(initialLabels, initialLabels),
+                                              sortBy(seq(1, n), initialLabels),
+                                              unique(initialLabels).size());
+    IntegerMatrix bondMat = rbindBonds(bonds);
+    int nBonds = bondMat.nrow();
+    
+    NumericVector mCounts(p);
+    
+    for(int i = 0; i < nBonds; i++){
+      // cout << "Id1: " << bondMat(i, 0) << "; Id2: " << bondMat(i, 1) << endl;
+      // cout << "Comparison: " << findBondInList(bondMat(i, 0), bondMat(i, 1), comparisons) << endl;
+      mCounts += findBondInList(bondMat(i, 0), bondMat(i, 1), comparisons);
+    }
+    
+     //priorLinkProb = rbeta(1, nBonds + 1, nc2 - nBonds + 1)(0);
+     ms = sampleBeta(mCounts + 1, nBonds - mCounts + 1);
+     us = sampleBeta(gammaTotal - mCounts + 1, nc2 - gammaTotal - (nBonds - mCounts) + 1);
+    
+    aTrace(i) = priorLinkProb;
+    mTrace(i,_) = ms;
+    uTrace(i,_) = us;
+    
+    if(i % reportInterval == 0){
+      cout << "nBonds = " << nBonds << endl;
+      cout << "Alpha = " << priorLinkProb << endl;
+      cout << "mCounts = " << mCounts << endl;
+    }
+    
+    
+    // for(int i = 0; i < p; i++){
+    //   mCounts(i) = 0;
+    // }
+    
   }
-  return compareLabels;
+  
+  List out(4);
+  out(0) = mcmcOut;
+  out(1) = aTrace;
+  out(2) = mTrace;
+  out(3) = uTrace;
+  return out;
 }
-
-
