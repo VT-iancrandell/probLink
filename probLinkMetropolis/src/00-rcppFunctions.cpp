@@ -85,6 +85,32 @@ Rcpp::List componentLabelsToBonds(IntegerVector blockingFeature, IntegerVector c
   return bondList;
 }
 
+// [[Rcpp::export]]
+Rcpp::List componentLabelsToBondsCharacter(CharacterVector blockingFeature, IntegerVector componentLabels, int nUniqueFeatures){
+  int n = componentLabels.size();
+  Rcpp::List bondList(nUniqueFeatures);
+  
+  int startingIndex = 0;
+  int endingIndex = 0;
+  NumericVector indexSequence;
+  int listEntryIndex = 0;
+  
+  for(int i = 1; i < n; i++){
+    if(blockingFeature(i) == blockingFeature(i - 1)){
+      endingIndex++;
+    }else{
+      indexSequence = seq(startingIndex, endingIndex);
+      bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
+      startingIndex = endingIndex + 1;
+      endingIndex = startingIndex;
+      listEntryIndex++;
+    }
+  }
+  indexSequence = seq(startingIndex, endingIndex);
+  bondList(listEntryIndex) = makeCombinations(componentLabels[indexSequence]);
+  return bondList;
+}
+
 // Finds a bond in a list of bonds (sorted)
 
 // [[Rcpp::export]]

@@ -14,7 +14,7 @@ partitionedMCMC = function(bonds, comparisonVectors, controlParameters){
   noSingletons = lapply(which(comps$csize > 1), function(x) which(comps$membership == x))
   nComps = length(noSingletons)
   
-  partitionedComparisonVectors = lapply(1:nComps, function(x) {
+  mcmcLabels = lapply(1:nComps, function(x) {
     
     initialLabels = 1:length(noSingletons[[x]])
     activeComp = comparisonVectors[id1 %in% noSingletons[[x]]]
@@ -23,13 +23,7 @@ partitionedMCMC = function(bonds, comparisonVectors, controlParameters){
     colnames(out) = noSingletons[[x]]
     apply(out, 2, function(y) paste0(y, ".", x))
   })
-  
 }
-
-
-
-
-
 
 
 # Look at probable configurations and graps
