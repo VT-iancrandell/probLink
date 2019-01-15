@@ -1,7 +1,6 @@
+# Run the no-gibbs version of the algorithm on a list
 
-# Wrapper for the MCMC function to execust on a list of partitioned elements
-
-partitionedMCMC = function(bondList, comparisonVectors, controlParameters){
+partitionedMCMC = function(bonds, comparisonVectors, controlParameters){
   
   # Unpack arg list
   
@@ -9,8 +8,9 @@ partitionedMCMC = function(bondList, comparisonVectors, controlParameters){
   us = controlParameters$us
   priorLinkProb = controlParameters$priorLinkProb
   nMcmc = controlParameters$nMcmc
+  reportInterval = controlParameters$reportInterval
   
-  comps = componentSizesFromBonds(bondList)
+  comps = componentSizesFromBonds(bonds)
   noSingletons = lapply(which(comps$csize > 1), function(x) which(comps$membership == x))
   nComps = length(noSingletons)
   
@@ -19,12 +19,18 @@ partitionedMCMC = function(bondList, comparisonVectors, controlParameters){
     initialLabels = 1:length(noSingletons[[x]])
     activeComp = comparisonVectors[id1 %in% noSingletons[[x]]]
     relabeling = cbind(match(activeComp$id1, noSingletons[[x]]), match(activeComp$id2, noSingletons[[x]]))
-    out = linkageMetropolis(initialLabels, as.matrix(cbind(relabeling, activeComp[,-c(1, 2)])), ms, us, priorLinkProb, mcmc = nMcmc, reportInterval = 10000)
+    out = linkageMetropolis(initialLabels, as.matrix(cbind(relabeling, activeComp[,-c(1, 2)])), ms, us, priorLinkProb, mcmc = nMcmc, reportInterval = reportInterval)
     colnames(out) = noSingletons[[x]]
     apply(out, 2, function(y) paste0(y, ".", x))
   })
   
 }
+
+
+
+
+
+
 
 # Look at probable configurations and graps
 

@@ -314,94 +314,57 @@ NumericMatrix linkageMetropolis(IntegerVector initialLabels, NumericMatrix compa
   return mcmcOut;
 }
 
-// Metropolis algorithm with a gibbs step for the non-class label parameters
+//
+// Functions for extracting the information needed for performing the Gibbs steps
+//
 
-// [[Rcpp::export]]
-List linkageMetropolisWithGibbs(IntegerVector initialLabels, NumericMatrix comparisons, NumericVector ms, NumericVector us, float priorLinkProb, int mcmc, int reportInterval){
-  
-  int n = initialLabels.size();
-  float alpha;
-  int newLabel;
-  int p = comparisons.ncol() - 2;
-  int nc2 = n * (n - 1) / 2;
-  
-  // Storage objects
-  NumericMatrix mcmcOut(mcmc, n);
-  NumericVector aTrace(mcmc);
-  NumericMatrix mTrace(mcmc, p);
-  NumericMatrix uTrace(mcmc, p);
-  IntegerVector proposedLabels = clone(initialLabels);
-  
-  //Count the sum of the comparisons that are equal
-  NumericVector gammaTotal(p);
-  for(int i = 0; i < p; i++){
-    for(int j = 0; j < comparisons.nrow(); j++){
-      gammaTotal(i) += comparisons(j, i + 2);
-    }
+// List gibbsStep(IntegerVector labels, NumericMatrix comparisons, NumericVector gammaTotal){
+//   
+//   int n = labels.size();
+//   int nc2 = n * (n - 1) / 2;
+//   
+//   Rcpp::List bonds = componentLabelsToBonds(sortBy(labels, labels),
+//                                             sortBy(seq(1, n), labels),
+//                                             unique(labels).size());
+//   IntegerMatrix bondMat = rbindBonds(bonds);
+//   int nBonds = bondMat.nrow();
+//   
+//   NumericVector mCounts(comparisons.ncol() - 2);
+//   
+//   for(int i = 0; i < nBonds; i++){
+//     mCounts += findBondInList(bondMat(i, 0), bondMat(i, 1), comparisons);
+//   }
+//   
+//   List out(3);
+//   out(0) = rbeta(1, nBonds + 1, nc2 - nBonds + 1)(0);;
+//   out(1) = sampleBeta(mCounts + 1, nBonds - mCounts + 1);
+//   out(2) = sampleBeta(gammaTotal - mCounts + 1, nc2 - gammaTotal - (nBonds - mCounts) + 1);
+//   return out;
+//   
+// }
+
+// [[Rcpp::export]]  
+List gibbsStep(NumericMatrix bondMat, NumericMatrix comparisons, NumericVector gammaTotal){
+
+  int nBonds = bondMat.nrow();
+
+  NumericVector mCounts(comparisons.ncol() - 2);
+
+  for(int i = 0; i < nBonds; i++){
+    mCounts += findBondInList(bondMat(i, 0), bondMat(i, 1), comparisons);
   }
-  
-  // This is the outer loop. At each iteration it samples each class label and then does a Gibbs step for each other parameter
-  for(int i = 0; i < mcmc; i++){
-    
-    // Inner loop for doing Metropolis on each class label
-    for(int j = 0; j < n; j++){
-      newLabel = (rand() % n) + 1;
-      proposedLabels(j) = newLabel;
-      alpha = logProposalRatio(initialLabels, proposedLabels, comparisons, ms, us, priorLinkProb, j + 1);
-      if(alpha > log(runif(1)(0))) {
-        initialLabels[j] = proposedLabels[j];
-      }else{
-        proposedLabels[j] = initialLabels[j];
-      }
-    }
-    
-    // Save the class label results and report as requested
-    mcmcOut(i,_) = initialLabels;
-    if(i % reportInterval == 0){
-      cout << "Beginning iteration " << i << endl;
-    }
-    
-    //Gibbs section for other parameters
-    
-    Rcpp::List bonds = componentLabelsToBonds(sortBy(initialLabels, initialLabels),
-                                              sortBy(seq(1, n), initialLabels),
-                                              unique(initialLabels).size());
-    IntegerMatrix bondMat = rbindBonds(bonds);
-    int nBonds = bondMat.nrow();
-    
-    NumericVector mCounts(p);
-    
-    for(int i = 0; i < nBonds; i++){
-      // cout << "Id1: " << bondMat(i, 0) << "; Id2: " << bondMat(i, 1) << endl;
-      // cout << "Comparison: " << findBondInList(bondMat(i, 0), bondMat(i, 1), comparisons) << endl;
-      mCounts += findBondInList(bondMat(i, 0), bondMat(i, 1), comparisons);
-    }
-    
-     //priorLinkProb = rbeta(1, nBonds + 1, nc2 - nBonds + 1)(0);
-     ms = sampleBeta(mCounts + 1, nBonds - mCounts + 1);
-     us = sampleBeta(gammaTotal - mCounts + 1, nc2 - gammaTotal - (nBonds - mCounts) + 1);
-    
-    aTrace(i) = priorLinkProb;
-    mTrace(i,_) = ms;
-    uTrace(i,_) = us;
-    
-    if(i % reportInterval == 0){
-      cout << "nBonds = " << nBonds << endl;
-      cout << "Alpha = " << priorLinkProb << endl;
-      cout << "mCounts = " << mCounts << endl;
-    }
-    
-    
-    // for(int i = 0; i < p; i++){
-    //   mCounts(i) = 0;
-    // }
-    
-  }
-  
-  List out(4);
-  out(0) = mcmcOut;
-  out(1) = aTrace;
-  out(2) = mTrace;
-  out(3) = uTrace;
+
+  List out(3);
+  out(0) = rbeta(1, nBonds + 1, comparisons.nrow() - nBonds + 1)(0);;
+  out(1) = sampleBeta(mCounts + 1, nBonds - mCounts + 1);
+  out(2) = sampleBeta(gammaTotal - mCounts + 1, comparisons.nrow() - gammaTotal - (nBonds - mCounts) + 1);
   return out;
+
 }
+
+
+
+
+
+
+
