@@ -317,20 +317,42 @@ NumericMatrix linkageMetropolis(IntegerVector initialLabels, NumericMatrix compa
   int n = initialLabels.size();
   float alpha;
   int newLabel;
+  int targetSetSize = 0;
+  int sourceSetSize = 0;
 
   NumericMatrix mcmcOut(mcmc, n);
   IntegerVector proposedLabels = clone(initialLabels);
   
   for(int i = 0; i < mcmc; i++){
     for(int j = 0; j < n; j++){
+      //Experimental
+      for(int k = 0; k < n; k++){
+        if(initialLabels[k] == initialLabels[j]){
+          sourceSetSize++;
+        }
+      }
+      //
       newLabel = (rand() % n) + 1;
+      // Experimental
+      for(int k = 0; k < n; k++){
+        if(initialLabels[k] == newLabel){
+          targetSetSize++;
+        }
+      }
+      //
       proposedLabels(j) = newLabel;
+      // Experimental
+
+      
       alpha = logProposalRatio(initialLabels, proposedLabels, comparisons, ms, us, priorLinkProb, j + 1);
+      //alpha = logProposalRatio(initialLabels, proposedLabels, comparisons, ms, us, priorLinkProb, j + 1) + log(sourceSetSize + 1);
       if(alpha > log(runif(1)(0))) {
         initialLabels[j] = proposedLabels[j];
       }else{
         proposedLabels[j] = initialLabels[j];
       }
+      targetSetSize = 0;
+      sourceSetSize = 0;
     }
     mcmcOut(i,_) = initialLabels;
     if((i + 1) % reportInterval == 0){
@@ -370,10 +392,10 @@ NumericMatrix linkageMetropolis(IntegerVector initialLabels, NumericMatrix compa
 // }
 
 // [[Rcpp::export]]  
-List gibbsStep(NumericMatrix bondMat, NumericMatrix comparisons, NumericVector gammaTotal){
+List gibbsStep(NumericMatrix bondMat, NumericMatrix comparisons, NumericVector gammaTotal, int nc2){
 
   int nBonds = bondMat.nrow();
-
+  //cout << "Row count = " << nBonds << endl;
   NumericVector mCounts(comparisons.ncol() - 2);
 
   for(int i = 0; i < nBonds; i++){
@@ -381,9 +403,11 @@ List gibbsStep(NumericMatrix bondMat, NumericMatrix comparisons, NumericVector g
   }
 
   List out(3);
-  out(0) = rbeta(1, nBonds + 1, comparisons.nrow() - nBonds + 1)(0);;
+  //out(0) = rbeta(1, nBonds + 1, comparisons.nrow() - nBonds + 1)(0);
+  out(0) = rbeta(1, nBonds + 1, nc2 - nBonds + 1)(0);
   out(1) = sampleBeta(mCounts + 1, nBonds - mCounts + 1);
-  out(2) = sampleBeta(gammaTotal - mCounts + 1, comparisons.nrow() - gammaTotal - (nBonds - mCounts) + 1);
+  //out(2) = sampleBeta(gammaTotal - mCounts + 1, comparisons.nrow() - gammaTotal - (nBonds - mCounts) + 1);
+  out(2) = sampleBeta(gammaTotal - mCounts + 1, nc2 - gammaTotal - (nBonds - mCounts) + 1);
   return out;
 
 }
